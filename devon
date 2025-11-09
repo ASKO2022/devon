@@ -84,9 +84,8 @@ EOF
 
 start() {
   DOMAIN="$PROJECT.devon.site"
-  CERT_DIR="$DEVON_HOME/traefik/tmp_certs"
   GLOBAL_CERT_DIR="$DEVON_HOME/traefik/global_certs"
-  mkdir -p "$CERT_DIR" "$GLOBAL_CERT_DIR"
+  mkdir -p "$GLOBAL_CERT_DIR"
 
   echo "🚀 Starte lokales devon Projekt: $PROJECT"
   echo "🌐 Domain: $DOMAIN"
@@ -98,43 +97,36 @@ start() {
     exit 1
   fi
 
-  # 🔒 Zertifikat erzeugen (lokal, falls nicht vorhanden)
-  if [ ! -f "$CERT_DIR/${DOMAIN}.crt" ]; then
+  # 🔒 SSL-Zertifikat erzeugen (nur falls nicht vorhanden)
+  CRT="$GLOBAL_CERT_DIR/${DOMAIN}.crt"
+  KEY="$GLOBAL_CERT_DIR/${DOMAIN}.key"
+  YAML="$GLOBAL_CERT_DIR/${DOMAIN}.yaml"
+
+  if [ ! -f "$CRT" ]; then
     echo "🔒 Erstelle SSL-Zertifikat für Domain: $DOMAIN ..."
-    mkcert -cert-file "$CERT_DIR/${DOMAIN}.crt" -key-file "$CERT_DIR/${DOMAIN}.key" "$DOMAIN"
+    mkcert -cert-file "$CRT" -key-file "$KEY" "$DOMAIN"
   else
-    echo "✅ Zertifikat bereits vorhanden: ${CERT_DIR}/${DOMAIN}.crt"
+    echo "✅ Zertifikat bereits vorhanden: $CRT"
   fi
 
-  # 🌎 Globale Zertifikatstruktur vorbereiten
-  GLOBAL_CACHE_PATH="$GLOBAL_CERT_DIR/${DOMAIN}"
-  mkdir -p "$GLOBAL_CACHE_PATH"
-
-  # Zertifikate in globalen Cache kopieren
-  cp "$CERT_DIR/${DOMAIN}.crt" "$GLOBAL_CACHE_PATH/${DOMAIN}.crt"
-  cp "$CERT_DIR/${DOMAIN}.key" "$GLOBAL_CACHE_PATH/${DOMAIN}.key"
-
-  # YAML für Traefik global erzeugen
-  cat > "$GLOBAL_CACHE_PATH/${DOMAIN}.yaml" <<EOF
+  # 🌎 YAML für Traefik erzeugen
+  cat > "$YAML" <<EOF
 tls:
   certificates:
     - certFile: /mnt/devon-global-cache/traefik/certs/${DOMAIN}.crt
       keyFile: /mnt/devon-global-cache/traefik/certs/${DOMAIN}.key
 EOF
 
-  # 📦 Zielpfad im Container sicherstellen
-  echo "📁 Erstelle globalen Pfad im Traefik-Container ..."
+  # 📦 Dateien ins Traefik-Volume kopieren
+  echo "📡 Kopiere Zertifikate in Traefik-Container ..."
   docker exec devon-traefik mkdir -p /mnt/devon-global-cache/traefik/certs 2>/dev/null || true
+  docker cp "$CRT"  devon-traefik:/mnt/devon-global-cache/traefik/certs/
+  docker cp "$KEY"  devon-traefik:/mnt/devon-global-cache/traefik/certs/
+  docker cp "$YAML" devon-traefik:/mnt/devon-global-cache/traefik/certs/
 
-  # 📤 Zertifikate ins Volume kopieren
-  echo "📡 Kopiere Zertifikate in Traefik-Volume ..."
-  docker cp "$GLOBAL_CACHE_PATH/${DOMAIN}.crt" devon-traefik:/mnt/devon-global-cache/traefik/certs/
-  docker cp "$GLOBAL_CACHE_PATH/${DOMAIN}.key" devon-traefik:/mnt/devon-global-cache/traefik/certs/
-  docker cp "$GLOBAL_CACHE_PATH/${DOMAIN}.yaml" devon-traefik:/mnt/devon-global-cache/traefik/certs/
+  echo "✅ Zertifikat aktiv unter: /mnt/devon-global-cache/traefik/certs/${DOMAIN}.crt"
 
-  echo "✅ Zertifikat global registriert unter: /mnt/devon-global-cache/traefik/certs/${DOMAIN}.crt"
-
-  # 🧭 Hosts-Datei prüfen
+  # 🧩 Domain in /etc/hosts eintragen
   if ! grep -q "$DOMAIN" /etc/hosts; then
     echo "🧩 Füge Domain zu /etc/hosts hinzu: $DOMAIN"
     echo "127.0.0.1 $DOMAIN" | sudo tee -a /etc/hosts >/dev/null
@@ -146,21 +138,16 @@ EOF
   if ! docker ps | grep -q devon-traefik; then
     echo "🌐 Starte globalen Traefik-Router ..."
     devon router start
-  else
-    echo "🧭 Nutze globalen devon-traefik (Port 80/443)"
   fi
 
-  # 🐍 Django + Datenbank starten
+  # 🐍 Django + DB starten
   echo "🐍 Starte Django + Datenbank ..."
   docker compose -f "$MYDEV_DIR/docker-compose.yaml" up -d --remove-orphans
 
   echo ""
   echo "✅ Projekt läuft unter: https://${DOMAIN}"
   echo "🧭 Traefik Dashboard:  http://localhost:8090"
-  echo "📂 Zertifikat global gespeichert unter: ${GLOBAL_CACHE_PATH}/"
 }
-
-
 
 stop() {
   docker compose -f $MYDEV_DIR/docker-compose.yaml down
