@@ -1,0 +1,45 @@
+# --- System/Editor ---
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# --- Logs & Temp ---
+*.log
+tmp/
+cache/
+coverage/
+
+# --- Lokale Umgebungen ---
+.env
+.env.*
+*.local
+
+# --- Traefik (Tool-seitig) ---
+# Behalte die statische Konfiguration im Repo (docker-compose.yaml, config.yaml),
+# aber ignoriere generierte/benutzerabhängige Assets wie Zertifikate und dynamische Dateien.
+traefik/global_certs/**
+!traefik/global_certs/.gitkeep
+
+traefik/dynamic/**
+!traefik/dynamic/.gitkeep
+
+traefik/tmp/**
+!traefik/tmp/.gitkeep
+
+# Falls du später ACME/LE einsetzt (Traefik):
+traefik/acme.json
+traefik/letsencrypt/**
+!traefik/letsencrypt/.gitkeep
+
+# --- Build/Release-Artefakte des Tools ---
+dist/
+build/
+*.tar.gz
+*.zip
+
+# --- (Optional) Node/Frontend im Tool-Repo ---
+node_modules/
+.npm/
+pnpm-lock.yaml
+yarn.lock
