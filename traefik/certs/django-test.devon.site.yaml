@@ -1,0 +1,4 @@
+tls:
+  certificates:
+    - certFile: /certs/django-test.devon.site.crt
+      keyFile: /certs/django-test.devon.site.key

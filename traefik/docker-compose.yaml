@@ -1,0 +1,31 @@
+services:
+    traefik:
+        image: traefik:v2.9
+        container_name: devon-traefik
+        restart: unless-stopped
+        ports:
+            - '80:80'
+            - '443:443'
+            - '8090:8080'
+        volumes:
+            - /var/run/docker.sock:/var/run/docker.sock
+            - ${HOME}/Projects/devon/traefik/config/traefik.yaml:/traefik.yaml:ro
+            - ${HOME}/Projects/devon/traefik/certs:/certs:ro
+            - ${PWD}/.devon/traefik/certs:/certs:ro
+        command:
+            - '--configFile=/traefik.yaml'
+            - '--providers.docker.endpoint=unix:///var/run/docker.sock'
+            - '--providers.docker.network=devon'
+            - '--providers.docker.exposedByDefault=false'
+            - '--providers.docker.watch=true'
+            - '--entrypoints.web.address=:80'
+            - '--entrypoints.websecure.address=:443'
+            - '--api.dashboard=true'
+            - '--api.insecure=true'
+
+        environment:
+            - TZ=Europe/Berlin
+networks:
+    default:
+        name: devon
+        external: true

@@ -1,0 +1,28 @@
+api:
+    dashboard: true
+    insecure: true
+
+entryPoints:
+    web:
+        address: ':80'
+    websecure:
+        address: ':443'
+
+providers:
+    docker:
+        exposedByDefault: false
+        network: devon
+        endpoint: 'unix:///var/run/docker.sock'
+    file:
+        directory: /certs
+        watch: true
+
+tls:
+    options:
+        default:
+            minVersion: VersionTLS12
+    stores:
+        default:
+            defaultCertificate:
+                certFile: /certs/{{DOMAIN}}.crt
+                keyFile: /certs/{{DOMAIN}}.key

@@ -1,0 +1,281 @@
+#!/usr/bin/env bash
+
+MYDEV_DIR=".devon"
+TEMPLATES="$HOME/Projects/devon/templates"
+PROJECT=$(basename "$PWD")
+
+config() {
+  PROJECT_TYPE="django"
+
+  # Optionaler Parameter: --type=django
+  while [[ "$#" -gt 0 ]]; do
+    case $1 in
+      --type=*) PROJECT_TYPE="${1#*=}";;
+    esac
+    shift
+  done
+
+  echo "🔧 Erstelle .devon für Projekt: $PROJECT (type: $PROJECT_TYPE)"
+
+  DOMAIN="$PROJECT.devon.site"
+  echo "🌐 Verwende Domain: https://$DOMAIN"
+
+  mkdir -p "$MYDEV_DIR/services"
+
+  # Framework-Config erzeugen
+  sed "s/{{PROJECT}}/$PROJECT/" \
+    "$TEMPLATES/frameworks/$PROJECT_TYPE/config.yaml.tpl" \
+    > "$MYDEV_DIR/config.yaml"
+
+  # Services kopieren
+  cp "$TEMPLATES/services/"*.yaml "$MYDEV_DIR/services/"
+
+  PYTHON_VERSION=$(grep python_version "$MYDEV_DIR/config.yaml" | awk '{print $2}')
+  sed -i "" "s/{{PYTHON_VERSION}}/$PYTHON_VERSION/g; s/{{PROJECT}}/$PROJECT/g" "$MYDEV_DIR/services/django.yaml"
+  sed -i "" "s/{{PROJECT}}/$PROJECT/g" "$MYDEV_DIR/services/postgres.yaml"
+
+  # docker-compose.yaml generieren
+  echo "🧩 Erstelle neue docker-compose.yaml ..."
+  rm -f "$MYDEV_DIR/docker-compose.yaml"
+
+  cat > "$MYDEV_DIR/docker-compose.yaml" <<EOF
+
+services:
+EOF
+
+  for FILE in "$MYDEV_DIR"/services/*.yaml; do
+    echo "" >> "$MYDEV_DIR/docker-compose.yaml"
+    sed 's/^/  /' "$FILE" >> "$MYDEV_DIR/docker-compose.yaml"
+
+  done
+
+  cat >> "$MYDEV_DIR/docker-compose.yaml" <<EOF
+
+volumes:
+  ${PROJECT}_dbdata:
+
+networks:
+  default:
+    name: devon
+    external: true
+EOF
+
+  grep -v '^domain:' "$MYDEV_DIR/config.yaml" > "$MYDEV_DIR/config.tmp"
+  echo "domain: $DOMAIN" >> "$MYDEV_DIR/config.tmp"
+  mv "$MYDEV_DIR/config.tmp" "$MYDEV_DIR/config.yaml"
+
+  echo "✅ .devon generiert!"
+  echo "PROJECT=$PROJECT" > "$MYDEV_DIR/.env"
+
+}
+
+start() {
+  DOMAIN="$PROJECT.devon.site"
+  CERT_DIR="$(pwd)/$MYDEV_DIR/traefik/certs"
+  NETWORK_NAME="${PROJECT}_net"
+
+  echo "🚀 Starte lokales devon Projekt: $PROJECT"
+  echo "🌐 Domain: $DOMAIN"
+
+  mkdir -p "$CERT_DIR"
+
+  # Prüfen, ob mkcert installiert ist
+  if ! command -v mkcert >/dev/null 2>&1; then
+    echo "❌ mkcert fehlt. Bitte installiere mit:"
+    echo "   brew install mkcert nss && mkcert -install"
+    exit 1
+  fi
+
+  # SSL-Zertifikat für Domain erzeugen, falls nicht vorhanden
+  if [ ! -f "$CERT_DIR/${DOMAIN}.crt" ]; then
+    echo "🔒 Erstelle SSL-Zertifikat für Domain: $DOMAIN ..."
+    mkcert -cert-file "$CERT_DIR/${DOMAIN}.crt" -key-file "$CERT_DIR/${DOMAIN}.key" "$DOMAIN"
+  else
+    echo "✅ Zertifikat bereits vorhanden: ${CERT_DIR}/${DOMAIN}.crt"
+  fi
+
+  # Traefik TLS-Konfiguration für diese Domain erzeugen
+  TRAFFIC_CERT_YAML="$CERT_DIR/${DOMAIN}.yaml"
+  cat > "$TRAFFIC_CERT_YAML" <<EOF
+tls:
+  certificates:
+    - certFile: /certs/${DOMAIN}.crt
+      keyFile: /certs/${DOMAIN}.key
+EOF
+
+
+  # Traefik YAML anpassen mit Domain
+  TRAefik_CONFIG_PATH="$MYDEV_DIR/traefik/traefik.yaml"
+  if [ -f "$TRAefik_CONFIG_PATH" ]; then
+    sed -i "" "s/{{DOMAIN}}/$DOMAIN/g" "$TRAefik_CONFIG_PATH"
+  fi
+
+  # Domain zu /etc/hosts hinzufügen, falls fehlt
+  if ! grep -q "$DOMAIN" /etc/hosts; then
+    echo "🧩 Füge Domain zu /etc/hosts hinzu: $DOMAIN"
+    echo "127.0.0.1 $DOMAIN" | sudo tee -a /etc/hosts >/dev/null
+  else
+    echo "✅ Domain bereits in /etc/hosts"
+  fi
+
+  # Alten Traefik ggf. entfernen
+  docker rm -f "${PROJECT}-traefik" >/dev/null 2>&1 || true
+
+  echo "🧭 Nutze globalen devon-traefik (Port 80/443)"
+
+  echo "🐍 Starte Django + Datenbank ..."
+  docker compose -f "$MYDEV_DIR/docker-compose.yaml" up -d --remove-orphans
+
+  echo ""
+  echo "✅ Projekt läuft unter: https://${DOMAIN}"
+  echo "🧭 Traefik Dashboard:  http://localhost:8090"
+  echo "📂 Zertifikate:        ${CERT_DIR}/${DOMAIN}.crt"
+}
+
+
+stop() {
+  docker compose -f $MYDEV_DIR/docker-compose.yaml down
+}
+
+ssh() {
+  docker exec -it ${PROJECT}-django bash
+}
+
+create() {
+  FRAMEWORK=$(grep framework .devon/config.yaml | awk '{print $2}')
+  CREATE_SCRIPT="$TEMPLATES/frameworks/$FRAMEWORK/create.sh"
+
+  if [ ! -f "$CREATE_SCRIPT" ]; then
+    echo "❌ Framework '$FRAMEWORK' hat keine create.sh"
+    exit 1
+  fi
+
+  bash "$CREATE_SCRIPT"
+  devon config --type=$FRAMEWORK
+  devon start
+
+  echo "🌐 Starte globalen Router (Traefik), falls er nicht läuft..."
+  docker ps | grep -q devon-traefik || devon router start
+
+}
+
+delete() {
+  echo "🗑  Entferne Projekt-Container und Volumes..."
+  docker compose -f $MYDEV_DIR/docker-compose.yaml down -v --remove-orphans
+  echo "📂 Lösche .devon Ordner..."
+  rm -rf $MYDEV_DIR
+  echo "✅ Projekt vollständig entfernt."
+}
+
+list() {
+  echo "📦 devon Projekte:"
+  echo ""
+
+  # Suche alle Django-Container (auch gestoppte)
+  CONTAINERS=$(docker ps -a --format '{{.Names}}' | grep -E '.*-django$')
+  
+  if [ -z "$CONTAINERS" ]; then
+    echo "⚠️  Keine devon Projekte gefunden."
+    exit 0
+  fi
+
+  for django in $CONTAINERS; do
+    PROJECT_NAME=$(echo "$django" | sed 's/-django$//')
+    DB_CONTAINER="${PROJECT_NAME}-db"
+    DEVON_DIR="$(docker inspect -f '{{.Config.Labels.devon_dir}}' "$django" 2>/dev/null || echo ".devon")"
+
+    # Status der Container
+    DJANGO_STATUS=$(docker inspect -f '{{.State.Status}}' "$django" 2>/dev/null || echo "nicht vorhanden")
+    DB_STATUS=$(docker inspect -f '{{.State.Status}}' "$DB_CONTAINER" 2>/dev/null || echo "nicht vorhanden")
+
+    # Port finden (falls läuft)
+    PORT=$(docker port "$django" 2>/dev/null | head -n 1 | awk -F: '{print $2}')
+
+    # Domain aus config.yaml (falls vorhanden)
+    DOMAIN=""
+    if [ -f "$PROJECT_NAME/.devon/config.yaml" ]; then
+      DOMAIN=$(grep '^domain:' "$PROJECT_NAME/.devon/config.yaml" | awk '{print $2}')
+    elif [ -f ".devon/config.yaml" ]; then
+      DOMAIN=$(grep '^domain:' ".devon/config.yaml" | awk '{print $2}')
+    fi
+
+    # Volume suchen
+    VOLUME=$(docker inspect -f '{{range .Mounts}}{{.Name}}{{end}}' "${PROJECT_NAME}-db" 2>/dev/null || true)
+
+    echo "🔹 $PROJECT_NAME"
+    echo "   Django:   $DJANGO_STATUS"
+    echo "   Datenbank: $DB_STATUS"
+
+    if [ -n "$PORT" ]; then
+      echo "   URL:      http://localhost:$PORT"
+    elif docker ps | grep -q devon-traefik && [ -n "$DOMAIN" ]; then
+      echo "   URL:      https://$DOMAIN"
+    else
+      echo "   URL:      (nicht aktiv)"
+    fi
+
+    if [ -n "$VOLUME" ]; then
+      echo "   Volume:   $VOLUME"
+    else
+      echo "   Volume:   (nicht gefunden)"
+    fi
+
+    echo ""
+  done
+}
+
+router() {
+  ROUTER_DIR="$HOME/Projects/devon/traefik"
+  COMPOSE_FILE="$ROUTER_DIR/docker-compose.yaml"
+
+  case "$2" in
+    start)
+      echo "🚀 Starte globalen Traefik-Router..."
+      docker compose -f "$COMPOSE_FILE" up -d
+      ;;
+    stop)
+      echo "🛑 Stoppe globalen Traefik-Router..."
+      docker compose -f "$COMPOSE_FILE" down
+      ;;
+    restart)
+      echo "🔁 Starte Router neu..."
+      docker compose -f "$COMPOSE_FILE" down
+      docker compose -f "$COMPOSE_FILE" up -d
+      ;;
+    logs)
+      echo "📜 Zeige Traefik-Logs..."
+      docker logs -f devon-traefik
+      ;;
+    *)
+      echo "Router Befehle:"
+      echo "  devon router start     - startet globalen Traefik"
+      echo "  devon router stop      - stoppt ihn"
+      echo "  devon router restart   - startet neu"
+      echo "  devon router logs      - zeigt Logs"
+      ;;
+  esac
+}
+
+
+
+case "$1" in
+  config) config ;;
+  start) start ;;
+  stop) stop ;;
+  ssh) ssh ;;
+  create) create ;;
+  delete) delete ;;
+  list) list ;;
+  router) router "$@" ;;
+  *)
+    echo "Befehle:"
+    echo "  devon config  --type=django            - Erzeugt .devon Projekt Setup"
+    echo "  devon start                            - Startet Container"
+    echo "  devon stop                             - Stoppt Container"
+    echo "  devon ssh                              - Shell im Django Container"
+    echo "  devon create                           - Erstellt ein neues Django Projekt (backend/)"
+    echo "  devon delete                           - Entfernt Container + Volumes + .devon"
+    echo "  devon list                             - Zeigt laufende devon Projekte"
+    echo "  devon router [start|stop|restart|logs] - Steuert den globalen Traefik-Router"
+    ;;
+esac
