@@ -1,11 +1,11 @@
 project_name: {{PROJECT}}
-framework: django
+framework: {{PROJECT_TYPE}}
 domain: {{PROJECT}}.devon.site
-python_version: 3.11
+python_version: {{PYTHON_VERSION}}
 
 db:
-  type: postgres
-  name: db
-  user: postgres
-  password: db
-  port: 5432
+  type: {{DB_TYPE}}
+  name: {{DB_NAME}}
+  user: {{DB_USER}}
+  password: {{DB_PASSWORD}}
+  port: {{DB_PORT}}

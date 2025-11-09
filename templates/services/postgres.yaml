@@ -1,11 +1,11 @@
 db:
-  image: postgres:15
+  image: {{DB_IMAGE}}
   container_name: {{PROJECT}}-db
   environment:
-    POSTGRES_USER: postgres
-    POSTGRES_PASSWORD: db
-    POSTGRES_DB: db
+    POSTGRES_USER: {{DB_USER}}
+    POSTGRES_PASSWORD: {{DB_PASSWORD}}
+    POSTGRES_DB: {{DB_NAME}}
   volumes:
     - {{PROJECT}}_dbdata:/var/lib/postgresql/data
   ports:
-    - "5432:5432"
+    - "{{DB_PORT}}:{{DB_PORT}}"
