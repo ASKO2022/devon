@@ -14,7 +14,7 @@ providers:
         network: devon
         endpoint: 'unix:///var/run/docker.sock'
     file:
-        directory: /certs
+        directory: /mnt/devon-global-cache/traefik/certs
         watch: true
 
 tls:

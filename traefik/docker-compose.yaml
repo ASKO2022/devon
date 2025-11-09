@@ -7,13 +7,15 @@ services:
             - '80:80'
             - '443:443'
             - '8090:8080'
+        environment:
+            - TZ=Europe/Berlin
+            - DEVON_HOME=${DEVON_HOME:-$HOME/.devon}
         volumes:
             - /var/run/docker.sock:/var/run/docker.sock
-            - ${HOME}/Projects/devon/traefik/config/traefik.yaml:/traefik.yaml:ro
-            - ${HOME}/Projects/devon/traefik/certs:/certs:ro
-            - ${PWD}/.devon/traefik/certs:/certs:ro
+            - ${DEVON_HOME}/traefik/config/traefik.yaml:/etc/traefik/traefik.yaml:ro
+            - devon-global-cache:/mnt/devon-global-cache
         command:
-            - '--configFile=/traefik.yaml'
+            - '--configFile=/etc/traefik/traefik.yaml'
             - '--providers.docker.endpoint=unix:///var/run/docker.sock'
             - '--providers.docker.network=devon'
             - '--providers.docker.exposedByDefault=false'
@@ -22,10 +24,13 @@ services:
             - '--entrypoints.websecure.address=:443'
             - '--api.dashboard=true'
             - '--api.insecure=true'
+        networks:
+            - devon
 
-        environment:
-            - TZ=Europe/Berlin
+volumes:
+    devon-global-cache:
+
 networks:
-    default:
+    devon:
         name: devon
         external: true
