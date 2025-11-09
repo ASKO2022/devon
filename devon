@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 
 MYDEV_DIR=".devon"
+
+# DEVON_HOME: bevorzugt Homebrew-Share, sonst ~/.devon, sonst Opt-Pfade, sonst Skriptpfad
 if [ -z "$DEVON_HOME" ]; then
-  if [ -d "$HOME/.devon" ]; then
+  HB_PREFIX="$(command -v brew >/dev/null 2>&1 && brew --prefix || true)"
+  if [ -n "$HB_PREFIX" ] && [ -d "$HB_PREFIX/share/devon" ]; then
+    DEVON_HOME="$HB_PREFIX/share/devon"
+  elif [ -d "$HOME/.devon" ]; then
     DEVON_HOME="$HOME/.devon"
   elif [ -d "/opt/homebrew/opt/devon" ]; then
     DEVON_HOME="/opt/homebrew/opt/devon"
@@ -12,12 +17,12 @@ if [ -z "$DEVON_HOME" ]; then
     DEVON_HOME="$(cd "$(dirname "$0")" && pwd)"
   fi
 fi
+
 export DEVON_HOME
 TEMPLATES="$DEVON_HOME/templates"
 PROJECT=$(basename "$PWD")
 DEVON_NAME="devon"
 DEVON_VERSION_DEFAULT="0.0.1"
-
 
 # ---------- yq-Loader + Fallback ----------
 load_cfg() {
