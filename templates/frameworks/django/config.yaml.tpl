@@ -1,6 +1,6 @@
 project_name: {{PROJECT}}
 framework: {{PROJECT_TYPE}}
-domain: {{PROJECT}}.devon.site
+domain: {{PROJECT}}.{{DOMAIN_BASE}}
 python_version: {{PYTHON_VERSION}}
 
 db:
