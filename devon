@@ -110,7 +110,7 @@ tool_version() {
   if [ -n "$DEVON_VERSION" ]; then
     v="$DEVON_VERSION"
   elif [ -f "$DEVON_HOME/VERSION" ]; then
-    v="$(cat "$DEVON_HOME/VERSION" | tr -d ' \n\r')"
+    v="$(tr -d ' \n\r' < "$DEVON_HOME/VERSION")"
   else
     v="$DEVON_VERSION_DEFAULT"
   fi
