@@ -594,8 +594,10 @@ KOMMANDOS:
                       --db-user=<user>              (default: postgres)
                       --db-password=<pw>            (default: db)
                       --db-port=<port>              (default: 5432)
+                      --domain-base=<dns>           (default: devon.site)
 
-  start             Startet Projekt-Container (Django + DB) und richtet Zertifikat global ein
+  init              Initialisiert ~/.devon (kopiert Templates/Traefik aus Paket)
+  start             Startet Projekt-Container (Django + DB) und richtet Zertifikat ein
   stop              Stoppt Projekt-Container
   restart           stop + start
   ssh               Shell in den Django-Container
@@ -606,7 +608,7 @@ KOMMANDOS:
   logs [svc]        Zeigt Logs (svc: django|db|traefik), default: Hinweis auf Nutzung
   router <cmd>      Steuert globalen Traefik (start|stop|restart|logs)
   db <subcmd>       DB-Helfer: shell | import <dump.sql> | export [out.sql]
-  open              Öffnet https://<project>.devon.site im Browser
+  open              Öffnet https://<project>.<domain-base> im Browser
   doctor            Diagnose: Docker/Compose/mkcert/Traefik & TLS-Check
   cert-reload       Hinweis zu automatischer Traefik-Konfig-Neuladung
   --version|-v      Zeigt devon CLI Version
@@ -623,33 +625,37 @@ BEISPIELE:
 KONFIG-Dateien & Vorlagen:
   $DEVON_HOME/templates/frameworks/<type>/config.yaml.tpl
   $DEVON_HOME/templates/services/*.yaml
-  <projekt>/.devon/config.yaml        (generiert)
+  <projekt>/.devon/config.yaml         (generiert)
   <projekt>/.devon/docker-compose.yaml (generiert)
   <projekt>/.devon/.env                (generiert, nicht committen)
 
-ZERTIFIKATE (globaler Traefik):
-  Zertifikate werden in den Containerpfad /mnt/devon-global-cache/traefik/certs/ kopiert,
-  und per YAML dort referenziert. mkcert ist erforderlich (brew install mkcert nss && mkcert -install).
+DOMAINS:
+  Default ist devon.site (z.B. project.devon.site). Für lokale Entwicklung wird automatisch
+
+ZERTIFIKATE (Traefik file-provider):
+  Zertifikate werden in den Containerpfad /mnt/devon-global-cache/traefik/certs/ kopiert.
+  mkcert wird verwendet, um lokale TLS-Zertifikate zu erzeugen.
 
 ENV VARS (optional):
-  DEVON_HOME      Basisverzeichnis für Templates/Traefik (Default: $HOME/.devon)
+  DEVON_HOME      Basisverzeichnis (Default: $HOME/.devon)
   DEVON_VERSION   Überschreibt Tool-Version (sonst DEVON_HOME/VERSION oder 0.0.1)
+  DOMAIN_BASE     DNS-Suffix (Default: devon.site)
+  DOMAIN          Vollständige Domain (überschreibt Berechnung)
 
 ABHÄNGIGKEITEN:
   - Docker + Docker Compose v2
   - mkcert (für lokale TLS-Zertifikate)
-  - yq (optional, für robustes Lesen/Schreiben von YAML; sonst Fallback via grep/awk)
+  - yq (optional, für robustes YAML; sonst Fallback via grep/awk)
 
 TROUBLESHOOTING:
-  - devon doctor             Führt Checks aus und zeigt TLS-Subject an
+  - devon doctor
   - docker logs -f devon-traefik | grep -i "Configuration loaded"
-  - mkcert -install          CA installieren, falls Browser TLS nicht vertraut
-  - /etc/hosts               Domain <project>.devon.site → 127.0.0.1 vorhanden?
-
+  - mkcert -install (CA installieren, falls Browser TLS nicht vertraut)
 EOF
 }
 
 case "$1" in
+  init) ensure_user_home; echo "✅ DEVON_HOME ist bereit: $DEVON_HOME"; exit 0 ;;
   config) shift; config "$@" ;;
   start) start ;;
   stop) stop ;;
