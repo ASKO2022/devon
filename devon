@@ -2,27 +2,65 @@
 
 MYDEV_DIR=".devon"
 
-# DEVON_HOME: bevorzugt Homebrew-Share, sonst ~/.devon, sonst Opt-Pfade, sonst Skriptpfad
-if [ -z "$DEVON_HOME" ]; then
-  HB_PREFIX="$(command -v brew >/dev/null 2>&1 && brew --prefix || true)"
-  if [ -n "$HB_PREFIX" ] && [ -d "$HB_PREFIX/share/devon" ]; then
-    DEVON_HOME="$HB_PREFIX/share/devon"
-  elif [ -d "$HOME/.devon" ]; then
-    DEVON_HOME="$HOME/.devon"
-  elif [ -d "/opt/homebrew/opt/devon" ]; then
-    DEVON_HOME="/opt/homebrew/opt/devon"
-  elif [ -d "/usr/local/opt/devon" ]; then
-    DEVON_HOME="/usr/local/opt/devon"
-  else
-    DEVON_HOME="$(cd "$(dirname "$0")" && pwd)"
-  fi
-fi
+# --- immer in ~/.devon arbeiten, Assets ggf. rüberkopieren ---
+ensure_user_home() {
+  local USER_HOME="$HOME/.devon"
 
-export DEVON_HOME
+  # wenn DEVON_HOME auf System-/Brew-Pfad zeigt -> umbiegen
+  case "$DEVON_HOME" in
+    /usr/local/opt/*|/opt/homebrew/opt/*|*/Cellar/*|*/share/devon|*/opt/devon)
+      DEVON_HOME="$USER_HOME"
+      ;;
+  esac
+  [ -z "$DEVON_HOME" ] && DEVON_HOME="$USER_HOME"
+
+  # Quelle für Assets bestimmen (Homebrew share bevorzugt, sonst Skriptpfad)
+  local PKG_SHARE=""
+  if command -v brew >/dev/null 2>&1; then
+    local PFX; PFX="$(brew --prefix 2>/dev/null || true)"
+    [ -d "$PFX/share/devon" ] && PKG_SHARE="$PFX/share/devon"
+  fi
+  [ -z "$PKG_SHARE" ] && PKG_SHARE="$(cd "$(dirname "$0")" && pwd)"
+
+  # Erstinitialisierung: templates/ und traefik/ bereitstellen
+  if [ ! -d "$DEVON_HOME/templates" ] || [ ! -d "$DEVON_HOME/traefik" ]; then
+    mkdir -p "$DEVON_HOME"
+    if command -v rsync >/dev/null 2>&1; then
+      [ -d "$PKG_SHARE/templates" ] && rsync -a "$PKG_SHARE/templates" "$DEVON_HOME/" || true
+      [ -d "$PKG_SHARE/traefik"   ] && rsync -a "$PKG_SHARE/traefik"   "$DEVON_HOME/" || true
+    else
+      [ -d "$PKG_SHARE/templates" ] && cp -R "$PKG_SHARE/templates" "$DEVON_HOME/" || true
+      [ -d "$PKG_SHARE/traefik"   ] && cp -R "$PKG_SHARE/traefik"   "$DEVON_HOME/" || true
+    fi
+    # VERSION übernehmen, falls vorhanden
+    [ -f "$PKG_SHARE/VERSION" ] && cp "$PKG_SHARE/VERSION" "$DEVON_HOME/VERSION"
+  fi
+
+  # Arbeitsverzeichnisse
+  mkdir -p "$DEVON_HOME/cache" "$DEVON_HOME/state" "$DEVON_HOME/traefik/global_certs"
+
+  export DEVON_HOME
+}
+
+# --- ENV bevorzugen: .devon/.env > config.yaml ---
+load_env_or_cfg() {
+  if [ -f "$MYDEV_DIR/.env" ]; then
+    # shellcheck disable=SC1090
+    set -a; . "$MYDEV_DIR/.env"; set +a
+  else
+    load_cfg
+  fi
+}
+
+ensure_user_home
 TEMPLATES="$DEVON_HOME/templates"
 PROJECT=$(basename "$PWD")
 DEVON_NAME="devon"
 DEVON_VERSION_DEFAULT="0.0.1"
+# Default-Domain-Basis: devon.site (lokal via /etc/hosts)
+DOMAIN_BASE="${DOMAIN_BASE:-devon.site}"
+echo "🌐 Verwende feste Domain-Basis: ${DOMAIN_BASE}"
+
 
 # ---------- yq-Loader + Fallback ----------
 load_cfg() {
