@@ -119,10 +119,7 @@ tool_version() {
     --short) echo "$v" ;;
     *)
       echo "$DEVON_NAME $v"
-      # Optional: Build-Infos
-      if [ -n "$DEVON_HOME" ]; then
-        echo "Home: $DEVON_HOME"
-      fi
+      [ -n "$DEVON_HOME" ] && echo "Home: $DEVON_HOME"
       ;;
   esac
 }
