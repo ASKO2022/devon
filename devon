@@ -145,6 +145,7 @@ config() {
   DB_USER="postgres"
   DB_PASSWORD="db"
   DB_PORT="5432"
+  DOMAIN_BASE="devon.site"
 
   for arg in "$@"; do
     case $arg in
@@ -156,11 +157,12 @@ config() {
       --db-user=*) DB_USER="${arg#*=}";;
       --db-password=*) DB_PASSWORD="${arg#*=}";;
       --db-port=*) DB_PORT="${arg#*=}";;
+      --domain-base=*) DOMAIN_BASE="${arg#*=}";;
     esac
   done
 
   echo "🔧 Erstelle .devon für Projekt: $PROJECT (type: $PROJECT_TYPE)"
-  DOMAIN="$PROJECT.devon.site"
+  DOMAIN="${PROJECT}.${DOMAIN_BASE}"
   echo "🌐 Verwende Domain: https://$DOMAIN"
   mkdir -p "$MYDEV_DIR/services"
 
@@ -241,8 +243,21 @@ DB_USER=$DB_USER
 DB_PASSWORD=$DB_PASSWORD
 DB_HOST=$DB_HOST
 DB_PORT=$DB_PORT
+DOMAIN_BASE=$DOMAIN_BASE
 DOMAIN=$DOMAIN
 EOF
+
+   # 🧩 Domain automatisch in /etc/hosts eintragen (für *.devon.site)
+  if [[ "$DOMAIN" =~ \.devon\.site$ ]]; then
+    if ! grep -q "$DOMAIN" /etc/hosts; then
+      echo "🧩 Füge Domain zu /etc/hosts hinzu: $DOMAIN"
+      echo "127.0.0.1 $DOMAIN" | sudo tee -a /etc/hosts >/dev/null
+    else
+      echo "✅ Domain bereits in /etc/hosts"
+    fi
+  else
+    echo "ℹ️  DOMAIN_BASE ist '$DOMAIN_BASE' (kein /etc/hosts nötig)"
+  fi
 
   echo ""
   echo "✅ .devon erfolgreich generiert!"
