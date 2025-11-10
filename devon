@@ -336,11 +336,11 @@ EOF
 }
 
 stop() {
-  docker compose -f $MYDEV_DIR/docker-compose.yaml down
+  docker compose -f "$MYDEV_DIR/docker-compose.yaml" down
 }
 
 ssh() {
-  docker exec -it ${PROJECT}-django bash
+  docker exec -it "${PROJECT}-django" bash
 }
 
 create() {
