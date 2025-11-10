@@ -12,20 +12,21 @@ django:
   labels:
     - "traefik.enable=true"
 
-    # HTTPS-Router (hast du schon)
-    - "traefik.http.routers.${PROJECT}.rule=Host(`${PROJECT}.devon.site`)"
-    - "traefik.http.routers.${PROJECT}.entrypoints=websecure"
-    - "traefik.http.routers.${PROJECT}.tls=true"
-    - "traefik.http.services.${PROJECT}.loadbalancer.server.port=8000"
-    - "traefik.http.services.${PROJECT}.loadbalancer.server.scheme=http"
+    # HTTPS-Router
+    - "traefik.http.routers.{{PROJECT}}.rule=Host(`${DOMAIN}`)"
+    - "traefik.http.routers.{{PROJECT}}.entrypoints=websecure"
+    - "traefik.http.routers.{{PROJECT}}.tls=true"
+    - "traefik.http.services.{{PROJECT}}.loadbalancer.server.port=8000"
+    - "traefik.http.services.{{PROJECT}}.loadbalancer.server.scheme=http"
     - "traefik.docker.network=devon"
 
-    # HTTP->HTTPS Redirect (zusätzlicher Router + Middleware)
-    - "traefik.http.routers.${PROJECT}-http.rule=Host(`${PROJECT}.devon.site`)"
-    - "traefik.http.routers.${PROJECT}-http.entrypoints=web"
-    - "traefik.http.routers.${PROJECT}-http.middlewares=${PROJECT}-https-redirect"
-    - "traefik.http.middlewares.${PROJECT}-https-redirect.redirectscheme.scheme=https"
-    - "traefik.http.middlewares.${PROJECT}-https-redirect.redirectscheme.permanent=true"
+    # HTTP -> HTTPS Redirect
+    - "traefik.http.routers.{{PROJECT}}-http.rule=Host(`${DOMAIN}`)"
+    - "traefik.http.routers.{{PROJECT}}-http.entrypoints=web"
+    - "traefik.http.routers.{{PROJECT}}-http.middlewares={{PROJECT}}-https-redirect"
+    - "traefik.http.middlewares.{{PROJECT}}-https-redirect.redirectscheme.scheme=https"
+    - "traefik.http.middlewares.{{PROJECT}}-https-redirect.redirectscheme.permanent=true"
+
 
   networks:
     - default
