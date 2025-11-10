@@ -457,11 +457,11 @@ router() {
 }
 
 status() {
-  DOMAIN="$PROJECT.devon.site"
+  load_env_or_cfg
+  DOMAIN="${DOMAIN:-${PROJECT}.${DOMAIN_BASE}}"
   DJ="${PROJECT}-django"; DB="${PROJECT}-db"
   echo "🔹 Projekt: $PROJECT"
-  docker ps -a --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}' | \
-    egrep "(^NAMES|$DJ$|$DB$|devon-traefik$)"
+  docker ps -a --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}' | egrep "(^NAMES|$DJ$|$DB$|devon-traefik$)"
   echo "🌐 URL: https://$DOMAIN"
 }
 
