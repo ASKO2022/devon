@@ -353,7 +353,7 @@ create() {
   fi
 
   bash "$CREATE_SCRIPT"
-  devon config --type=$FRAMEWORK
+  devon config --type="$FRAMEWORK"
   devon start
 
   echo "🌐 Starte globalen Router (Traefik), falls er nicht läuft..."
@@ -363,9 +363,9 @@ create() {
 
 delete() {
   echo "🗑  Entferne Projekt-Container und Volumes..."
-  docker compose -f $MYDEV_DIR/docker-compose.yaml down -v --remove-orphans
+  docker compose -f "$MYDEV_DIR/docker-compose.yaml" down -v --remove-orphans
   echo "📂 Lösche .devon Ordner..."
-  rm -rf $MYDEV_DIR
+  rm -rf "$MYDEV_DIR"
   echo "✅ Projekt vollständig entfernt."
 }
 
