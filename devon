@@ -1,686 +1,74 @@
 #!/usr/bin/env bash
+# =====================================================================
+# DEVON CLI – Haupt-Launcher
+# Lädt Libraries, Commands und führt Dispatching aus.
+# =====================================================================
 
+set -euo pipefail
+
+# ---------------------------------------------------------------------
+# 🔧 Basis-Setup
+# ---------------------------------------------------------------------
+PROJECT="$(basename "$PWD")"
 MYDEV_DIR=".devon"
-
-# --- immer in ~/.devon arbeiten, Assets ggf. rüberkopieren ---
-ensure_user_home() {
-  local USER_HOME="$HOME/.devon"
-
-  # wenn DEVON_HOME auf System-/Brew-Pfad zeigt -> umbiegen
-  case "$DEVON_HOME" in
-    /usr/local/opt/*|/opt/homebrew/opt/*|*/Cellar/*|*/share/devon|*/opt/devon)
-      DEVON_HOME="$USER_HOME"
-      ;;
-  esac
-  [ -z "$DEVON_HOME" ] && DEVON_HOME="$USER_HOME"
-
-  # Quelle für Assets bestimmen (Homebrew share bevorzugt, sonst Skriptpfad)
-  local PKG_SHARE=""
-  if command -v brew >/dev/null 2>&1; then
-    local PFX; PFX="$(brew --prefix 2>/dev/null || true)"
-    [ -d "$PFX/share/devon" ] && PKG_SHARE="$PFX/share/devon"
-  fi
-  [ -z "$PKG_SHARE" ] && PKG_SHARE="$(cd "$(dirname "$0")" && pwd)"
-
-  # Erstinitialisierung: templates/ und traefik/ bereitstellen
-  if [ ! -d "$DEVON_HOME/templates" ] || [ ! -d "$DEVON_HOME/traefik" ]; then
-    mkdir -p "$DEVON_HOME"
-    if command -v rsync >/dev/null 2>&1; then
-      [ -d "$PKG_SHARE/templates" ] && rsync -a "$PKG_SHARE/templates" "$DEVON_HOME/" || true
-      [ -d "$PKG_SHARE/traefik"   ] && rsync -a "$PKG_SHARE/traefik"   "$DEVON_HOME/" || true
-    else
-      [ -d "$PKG_SHARE/templates" ] && cp -R "$PKG_SHARE/templates" "$DEVON_HOME/" || true
-      [ -d "$PKG_SHARE/traefik"   ] && cp -R "$PKG_SHARE/traefik"   "$DEVON_HOME/" || true
-    fi
-    # VERSION übernehmen, falls vorhanden
-    [ -f "$PKG_SHARE/VERSION" ] && cp "$PKG_SHARE/VERSION" "$DEVON_HOME/VERSION"
-  fi
-
-  # Arbeitsverzeichnisse
-  mkdir -p "$DEVON_HOME/cache" "$DEVON_HOME/state" "$DEVON_HOME/traefik/global_certs"
-
-  export DEVON_HOME
-}
-
-# --- ENV bevorzugen: .devon/.env > config.yaml ---
-load_env_or_cfg() {
-  if [ -f "$MYDEV_DIR/.env" ]; then
-    # shellcheck disable=SC1090
-    set -a; . "$MYDEV_DIR/.env"; set +a
-  else
-    load_cfg
-  fi
-}
-
-ensure_user_home
-TEMPLATES="$DEVON_HOME/templates"
-PROJECT=$(basename "$PWD")
 DEVON_NAME="devon"
-DEVON_VERSION_DEFAULT="0.0.1"
-# Default-Domain-Basis: devon.site (lokal via /etc/hosts)
+DEVON_HOME="${DEVON_HOME:-$HOME/.devon}"
 DOMAIN_BASE="${DOMAIN_BASE:-devon.site}"
+DEVON_VERSION_DEFAULT="0.0.1"
+
 echo "🌐 Verwende feste Domain-Basis: ${DOMAIN_BASE}"
 
-
-# ---------- yq-Loader + Fallback ----------
-load_cfg() {
-  local CFG="${MYDEV_DIR}/config.yaml"
-  if [ ! -f "$CFG" ]; then
-    echo "❌ $CFG nicht gefunden"; return 1
-  fi
-
-  if command -v yq >/dev/null 2>&1; then
-    PROJECT_TYPE="$(yq -r '.framework'        "$CFG")"
-    PYTHON_VERSION="$(yq -r '.python_version' "$CFG")"
-    DOMAIN="$(yq -r '.domain'                 "$CFG")"
-    DB_TYPE="$(yq -r '.db.type'               "$CFG")"
-    DB_NAME="$(yq -r '.db.name'               "$CFG")"
-    DB_USER="$(yq -r '.db.user'               "$CFG")"
-    DB_PASSWORD="$(yq -r '.db.password'       "$CFG")"
-    DB_HOST="$(yq -r '.db.host // "localhost"' "$CFG")"
-    DB_PORT="$(yq -r '.db.port'               "$CFG")"
-  else
-    # einfacher Fallback
-    val() { grep -E "^[[:space:]]*$1:" "$CFG" | head -n1 | awk -F': *' '{print $2}'; }
-    PROJECT_TYPE="$(val framework)"
-    PYTHON_VERSION="$(val python_version)"
-    DOMAIN="$(val domain)"
-    DB_TYPE="$(grep -A6 '^db:' "$CFG" | grep -E '^[[:space:]]*type:'     | awk -F': *' '{print $2}')"
-    DB_NAME="$(grep -A6 '^db:' "$CFG" | grep -E '^[[:space:]]*name:'     | awk -F': *' '{print $2}')"
-    DB_USER="$(grep -A6 '^db:' "$CFG" | grep -E '^[[:space:]]*user:'     | awk -F': *' '{print $2}')"
-    DB_PASSWORD="$(grep -A6 '^db:' "$CFG" | grep -E '^[[:space:]]*password:' | awk -F': *' '{print $2}')"
-    DB_HOST="$(grep -A6 '^db:' "$CFG" | grep -E '^[[:space:]]*host:'     | awk -F': *' '{print $2}')"
-    DB_PORT="$(grep -A6 '^db:' "$CFG" | grep -E '^[[:space:]]*port:'     | awk -F': *' '{print $2}')"
-    [ -z "$DB_HOST" ] && DB_HOST="localhost"
-  fi
-
-  : "${PROJECT_TYPE:=django}"
-  : "${PYTHON_VERSION:=3.11}"
-  : "${DOMAIN:=${PROJECT}.${DOMAIN_BASE}}"
-  : "${DB_TYPE:=postgres}"
-  : "${DB_NAME:=db}"
-  : "${DB_USER:=postgres}"
-  : "${DB_PASSWORD:=db}"
-  : "${DB_HOST:=localhost}"
-  : "${DB_PORT:=5432}"
-}
-
-tool_version() {
-  local v=""
-  if [ -n "$DEVON_VERSION" ]; then
-    v="$DEVON_VERSION"
-  elif [ -f "$DEVON_HOME/VERSION" ]; then
-    v="$(tr -d ' \n\r' < "$DEVON_HOME/VERSION")"
-  else
-    v="$DEVON_VERSION_DEFAULT"
-  fi
-
-  case "$1" in
-    --short) echo "$v" ;;
-    *)
-      echo "$DEVON_NAME $v"
-      [ -n "$DEVON_HOME" ] && echo "Home: $DEVON_HOME"
-      ;;
-  esac
-}
-
-cfg_set() {
-  if ! command -v yq >/dev/null 2>&1; then
-    echo "⚠️  yq nicht gefunden, cfg_set übersprungen."
-    return 0
-  fi
-  local CFG="${MYDEV_DIR}/config.yaml"
-  local KEY="$1" VAL="$2"
-  [ -f "$CFG" ] || { echo "❌ $CFG fehlt"; return 1; }
-  yq -i ".$KEY = \"$VAL\"" "$CFG"
-}
-
-config() {
-  # Standardwerte aus CLI (nur für Generierung; Quelle bleibt YAML)
-  PROJECT_TYPE="django"
-  PYTHON_VERSION="3.11"
-  DB_TYPE="postgres"
-  DB_IMAGE="postgres:15"
-  DB_NAME="db"
-  DB_USER="postgres"
-  DB_PASSWORD="db"
-  DB_PORT="5432"
-  DOMAIN_BASE="devon.site"
-
-  for arg in "$@"; do
-    case $arg in
-      --type=*) PROJECT_TYPE="${arg#*=}";;
-      --python-version=*) PYTHON_VERSION="${arg#*=}";;
-      --db-type=*) DB_TYPE="${arg#*=}";;
-      --db-image=*) DB_IMAGE="${arg#*=}";;
-      --db-name=*) DB_NAME="${arg#*=}";;
-      --db-user=*) DB_USER="${arg#*=}";;
-      --db-password=*) DB_PASSWORD="${arg#*=}";;
-      --db-port=*) DB_PORT="${arg#*=}";;
-      --domain-base=*) DOMAIN_BASE="${arg#*=}";;
-    esac
+# ---------------------------------------------------------------------
+# 📚 Libraries laden
+# ---------------------------------------------------------------------
+LIB_DIR="$DEVON_HOME/lib"
+if [ -d "$LIB_DIR" ]; then
+  for lib in "$LIB_DIR"/*.sh; do
+    [ -f "$lib" ] && source "$lib"
   done
+fi
 
-  echo "🔧 Erstelle .devon für Projekt: $PROJECT (type: $PROJECT_TYPE)"
-  DOMAIN="${PROJECT}.${DOMAIN_BASE}"
-  echo "🌐 Verwende Domain: https://$DOMAIN"
-  mkdir -p "$MYDEV_DIR/services"
+# Stelle sicher, dass DEVON_HOME & Templates vorhanden sind
+ensure_user_home
+TEMPLATES="$DEVON_HOME/templates"
 
-  CONFIG_TEMPLATE="$TEMPLATES/frameworks/$PROJECT_TYPE/config.yaml.tpl"
-  if [ ! -f "$CONFIG_TEMPLATE" ]; then
-    echo "❌ Kein Template für $PROJECT_TYPE unter $CONFIG_TEMPLATE"
-    exit 1
-  fi
-  echo "✅ Template: $CONFIG_TEMPLATE"
+# ---------------------------------------------------------------------
+# ⚙️ Commands automatisch laden
+# ---------------------------------------------------------------------
+COMMANDS_DIR="$DEVON_HOME/commands"
+if [ -d "$COMMANDS_DIR" ]; then
+  for file in "$COMMANDS_DIR"/*.sh; do
+    [ -f "$file" ] || continue
+    source "$file"
 
-  # config.yaml neu schreiben
-  sed \
-    -e "s/{{PROJECT}}/$PROJECT/g" \
-    -e "s/{{PROJECT_TYPE}}/$PROJECT_TYPE/g" \
-    -e "s/{{PYTHON_VERSION}}/$PYTHON_VERSION/g" \
-    -e "s/{{DB_TYPE}}/$DB_TYPE/g" \
-    -e "s/{{DB_NAME}}/$DB_NAME/g" \
-    -e "s/{{DB_USER}}/$DB_USER/g" \
-    -e "s/{{DB_PASSWORD}}/$DB_PASSWORD/g" \
-    -e "s/{{DB_PORT}}/$DB_PORT/g" \
-    "$CONFIG_TEMPLATE" > "$MYDEV_DIR/config.yaml"
+    # Beispiel: dateiname cert-reload.sh → funktion cert_reload
+    cmd_name="$(basename "$file" .sh)"     # cert-reload
+    fn_name="${cmd_name//-/_}"             # cert_reload
 
-  # Domain-Schlüssel sicherstellen/überschreiben (mit yq, sonst sed-Append)
-  if command -v yq >/dev/null 2>&1; then
-    yq -i ".domain = \"$DOMAIN\"" "$MYDEV_DIR/config.yaml"
-  else
-    grep -v '^domain:' "$MYDEV_DIR/config.yaml" > "$MYDEV_DIR/config.tmp"
-    echo "domain: $DOMAIN" >> "$MYDEV_DIR/config.tmp"
-    mv "$MYDEV_DIR/config.tmp" "$MYDEV_DIR/config.yaml"
-  fi
-
-  # Ab hier nur noch aus YAML lesen → konsistent
-  load_cfg
-
-  # Services aus Templates erzeugen (ersetze mit Werten aus YAML)
-  for FILE in "$TEMPLATES/services/"*.yaml; do
-    BASENAME=$(basename "$FILE")
-    sed \
-      -e "s/{{PROJECT}}/$PROJECT/g" \
-      -e "s/{{PYTHON_VERSION}}/$PYTHON_VERSION/g" \
-      -e "s/{{DB_TYPE}}/$DB_TYPE/g" \
-      -e "s/{{DB_IMAGE}}/${DB_IMAGE:-postgres:15}/g" \
-      -e "s/{{DB_NAME}}/$DB_NAME/g" \
-      -e "s/{{DB_USER}}/$DB_USER/g" \
-      -e "s/{{DB_PASSWORD}}/$DB_PASSWORD/g" \
-      -e "s/{{DB_PORT}}/$DB_PORT/g" \
-      "$FILE" > "$MYDEV_DIR/services/$BASENAME"
+    # Falls cert_reload existiert, aber cert-reload nicht → alias bauen
+    if ! declare -F "$cmd_name" >/dev/null 2>&1 && declare -F "$fn_name" >/dev/null 2>&1; then
+      eval "$cmd_name() { $fn_name \"\$@\"; }"
+    fi
   done
-
-  # docker-compose.yaml generieren
-  echo "🧩 Erstelle neue docker-compose.yaml ..."
-  rm -f "$MYDEV_DIR/docker-compose.yaml"
-  {
-    echo "services:"
-    for FILE in "$MYDEV_DIR"/services/*.yaml; do
-      echo ""
-      sed 's/^/  /' "$FILE"
-    done
-    echo ""
-    echo "volumes:"
-    echo "  ${PROJECT}_dbdata:"
-    echo ""
-    echo "networks:"
-    echo "  default:"
-    echo "    name: devon"
-    echo "    external: true"
-  } > "$MYDEV_DIR/docker-compose.yaml"
-
-  # .env aus YAML generieren
-  ENV_FILE="$MYDEV_DIR/.env"
-  cat > "$ENV_FILE" <<EOF
-PROJECT=$PROJECT
-PYTHON_VERSION=$PYTHON_VERSION
-DB_TYPE=$DB_TYPE
-DB_IMAGE=${DB_IMAGE:-postgres:15}
-DB_NAME=$DB_NAME
-DB_USER=$DB_USER
-DB_PASSWORD=$DB_PASSWORD
-DB_HOST=$DB_HOST
-DB_PORT=$DB_PORT
-DOMAIN_BASE=$DOMAIN_BASE
-DOMAIN=$DOMAIN
-EOF
-
-   # 🧩 Domain automatisch in /etc/hosts eintragen (für *.devon.site)
-  if [[ "$DOMAIN" =~ \.devon\.site$ ]]; then
-    if ! grep -q "$DOMAIN" /etc/hosts; then
-      echo "🧩 Füge Domain zu /etc/hosts hinzu: $DOMAIN"
-      echo "127.0.0.1 $DOMAIN" | sudo tee -a /etc/hosts >/dev/null
-    else
-      echo "✅ Domain bereits in /etc/hosts"
-    fi
-  else
-    echo "ℹ️  DOMAIN_BASE ist '$DOMAIN_BASE' (kein /etc/hosts nötig)"
-  fi
-
-  echo ""
-  echo "✅ .devon erfolgreich generiert!"
-  echo "📁  Config: $MYDEV_DIR/config.yaml"
-  echo "🔐 .env:    $ENV_FILE (nicht einchecken)"
-}
-
-
-
-start() {
-  load_env_or_cfg
-  DOMAIN="${DOMAIN:-${PROJECT}.${DOMAIN_BASE}}"
-  GLOBAL_CERT_DIR="$DEVON_HOME/traefik/global_certs"
-  mkdir -p "$GLOBAL_CERT_DIR"
-
-  echo "🚀 Starte lokales devon Projekt: $PROJECT"
-  echo "🌐 Domain: $DOMAIN"
-
-  # 🔍 Prüfe mkcert Installation
-  if ! command -v mkcert >/dev/null 2>&1; then
-    echo "❌ mkcert fehlt. Bitte installiere mit:"
-    echo "   brew install mkcert nss && mkcert -install"
-    exit 1
-  fi
-
-  # 🔒 SSL-Zertifikat erzeugen (nur falls nicht vorhanden)
-  CRT="$GLOBAL_CERT_DIR/${DOMAIN}.crt"
-  KEY="$GLOBAL_CERT_DIR/${DOMAIN}.key"
-  YAML="$GLOBAL_CERT_DIR/${DOMAIN}.yaml"
-
-  if [ ! -f "$CRT" ]; then
-    echo "🔒 Erstelle SSL-Zertifikat für Domain: $DOMAIN ..."
-    mkcert -cert-file "$CRT" -key-file "$KEY" "$DOMAIN"
-  else
-    echo "✅ Zertifikat bereits vorhanden: $CRT"
-  fi
-
-  # 🌎 YAML für Traefik erzeugen
-  cat > "$YAML" <<EOF
-tls:
-  certificates:
-    - certFile: /mnt/devon-global-cache/traefik/certs/${DOMAIN}.crt
-      keyFile: /mnt/devon-global-cache/traefik/certs/${DOMAIN}.key
-EOF
-
-  # 📡 Zertifikate in Traefik-Container kopieren
-  echo "📡 Kopiere Zertifikate in Traefik-Container ..."
-  docker exec devon-traefik mkdir -p /mnt/devon-global-cache/traefik/certs 2>/dev/null || true
-  docker cp "$CRT"  devon-traefik:/mnt/devon-global-cache/traefik/certs/
-  docker cp "$KEY"  devon-traefik:/mnt/devon-global-cache/traefik/certs/
-  docker cp "$YAML" devon-traefik:/mnt/devon-global-cache/traefik/certs/
-
-  echo "✅ Zertifikat aktiv unter: /mnt/devon-global-cache/traefik/certs/${DOMAIN}.crt"
-
-  # 🧩 Stelle sicher, dass Domain in /etc/hosts steht
-  if ! grep -q "$DOMAIN" /etc/hosts; then
-    echo "🧩 Füge Domain zu /etc/hosts hinzu: $DOMAIN"
-    echo "127.0.0.1 $DOMAIN" | sudo tee -a /etc/hosts >/dev/null
-  else
-    echo "✅ Domain bereits in /etc/hosts"
-  fi
-
-  # 🧭 Traefik läuft?
-  if ! docker ps | grep -q devon-traefik; then
-    echo "🌐 Starte globalen Traefik-Router ..."
-    devon router start
-  fi
-
-  # 🐍 Django + DB starten
-  echo "🐍 Starte Django + Datenbank ..."
-  docker compose --env-file "$MYDEV_DIR/.env" -f "$MYDEV_DIR/docker-compose.yaml" up -d --remove-orphans
-
-  echo ""
-  echo "✅ Projekt läuft unter: https://${DOMAIN}"
-  echo "🧭 Traefik Dashboard:  http://localhost:8090"
-}
-
-stop() {
-  docker compose -f "$MYDEV_DIR/docker-compose.yaml" down
-}
-
-ssh() {
-  docker exec -it "${PROJECT}-django" bash
-}
-
-create() {
-  FRAMEWORK=$(grep framework .devon/config.yaml | awk '{print $2}')
-  CREATE_SCRIPT="$TEMPLATES/frameworks/$FRAMEWORK/create.sh"
-
-  if [ ! -f "$CREATE_SCRIPT" ]; then
-    echo "❌ Framework '$FRAMEWORK' hat keine create.sh"
-    exit 1
-  fi
-
-  bash "$CREATE_SCRIPT"
-  devon config --type="$FRAMEWORK"
-  devon start
-
-  echo "🌐 Starte globalen Router (Traefik), falls er nicht läuft..."
-  docker ps | grep -q devon-traefik || devon router start
-
-}
-
-delete() {
-  echo "🗑  Entferne Projekt-Container und Volumes..."
-  docker compose -f "$MYDEV_DIR/docker-compose.yaml" down -v --remove-orphans
-  echo "📂 Lösche .devon Ordner..."
-  rm -rf "$MYDEV_DIR"
-  echo "✅ Projekt vollständig entfernt."
-}
-
-list() {
-  echo "📦 devon Projekte:"
-  echo ""
-
-  # Suche alle Django-Container (auch gestoppte)
-  CONTAINERS=$(docker ps -a --format '{{.Names}}' | grep -E '.*-django$' || true)
-  if [ -z "$CONTAINERS" ]; then
-    echo "⚠️  Keine devon Projekte gefunden."
-    exit 0
-  fi
-
-  for django in $CONTAINERS; do
-    PROJECT_NAME=$(echo "$django" | sed 's/-django$//')
-    DB_CONTAINER="${PROJECT_NAME}-db"
-
-    # Status der Container
-    DJANGO_STATUS=$(docker inspect -f '{{.State.Status}}' "$django" 2>/dev/null || echo "nicht vorhanden")
-    DB_STATUS=$(docker inspect -f '{{.State.Status}}' "$DB_CONTAINER" 2>/dev/null || echo "nicht vorhanden")
-
-    # Port finden (falls läuft)
-    PORT=$(docker port "$django" 2>/dev/null | head -n 1 | awk -F: '{print $2}')
-
-    # Domain aus config.yaml (falls vorhanden)
-    DOMAIN_VAL=""
-    if [ -f "$PROJECT_NAME/.devon/config.yaml" ]; then
-      DOMAIN_VAL=$(grep '^domain:' "$PROJECT_NAME/.devon/config.yaml" | awk '{print $2}')
-    elif [ -f ".devon/config.yaml" ]; then
-      DOMAIN_VAL=$(grep '^domain:' ".devon/config.yaml" | awk '{print $2}')
-    fi
-
-    # Volume suchen
-    VOLUME=$(docker inspect -f '{{range .Mounts}}{{.Name}}{{end}}' "$DB_CONTAINER" 2>/dev/null || true)
-
-    echo "🔹 $PROJECT_NAME"
-    echo "   Django:    $DJANGO_STATUS"
-    echo "   Datenbank: $DB_STATUS"
-
-    if [ -n "$PORT" ]; then
-      echo "   URL:       http://localhost:$PORT"
-    elif docker ps | grep -q devon-traefik && [ -n "$DOMAIN_VAL" ]; then
-      echo "   URL:       https://$DOMAIN_VAL"
-    else
-      echo "   URL:       (nicht aktiv)"
-    fi
-
-    if [ -n "$VOLUME" ]; then
-      echo "   Volume:    $VOLUME"
-    else
-      echo "   Volume:    (nicht gefunden)"
-    fi
-
-    echo ""
-  done
-}
-
-router() {
-  ROUTER_DIR="$DEVON_HOME/traefik"
-  COMPOSE_FILE="$ROUTER_DIR/docker-compose.yaml"
-
-  case "$2" in
-    start)
-      echo "🚀 Starte globalen Traefik-Router..."
-      docker compose -f "$COMPOSE_FILE" up -d
-      ;;
-    stop)
-      echo "🛑 Stoppe globalen Traefik-Router..."
-      docker compose -f "$COMPOSE_FILE" down
-      ;;
-    restart)
-      echo "🔁 Starte Router neu..."
-      docker compose -f "$COMPOSE_FILE" down
-      docker compose -f "$COMPOSE_FILE" up -d
-      ;;
-    logs)
-      echo "📜 Zeige Traefik-Logs..."
-      docker logs -f devon-traefik
-      ;;
-    *)
-      echo "Router Befehle:"
-      echo "  devon router start     - startet globalen Traefik"
-      echo "  devon router stop      - stoppt ihn"
-      echo "  devon router restart   - startet neu"
-      echo "  devon router logs      - zeigt Logs"
-      ;;
-  esac
-}
-
-status() {
-  load_env_or_cfg
-  DOMAIN="${DOMAIN:-${PROJECT}.${DOMAIN_BASE}}"
-  DJ="${PROJECT}-django"; DB="${PROJECT}-db"
-  echo "🔹 Projekt: $PROJECT"
-  docker ps -a --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}' | egrep "(^NAMES|$DJ$|$DB$|devon-traefik$)"
-  echo "🌐 URL: https://$DOMAIN"
-}
-
-logs() {
-  case "$2" in
-    django) docker logs -f "${PROJECT}-django" ;;
-    db)     docker logs -f "${PROJECT}-db" ;;
-    traefik)docker logs -f devon-traefik ;;
-    *) echo "Nutze: devon logs [django|db|traefik]";;
-  esac
-}
-
-restart() {
-  stop
-  start
-}
-
-open() {
-  load_env_or_cfg
-  DOMAIN="${DOMAIN:-${PROJECT}.${DOMAIN_BASE}}"
-  command -v open >/dev/null && open "https://$DOMAIN" || xdg-open "https://$DOMAIN"
-}
-
-doctor() {
-  set -e
-  echo "🩺 devon doctor"
-  echo "───────────────────────────────"
-
-  # 🔧 Basis-Checks
-  command -v docker >/dev/null || { echo "❌ Docker fehlt"; exit 1; }
-  docker compose version >/dev/null || { echo "❌ Docker Compose v2 fehlt"; exit 1; }
-
-  if ! command -v mkcert >/dev/null; then
-    echo "❌ mkcert fehlt (installiere mit: brew install mkcert nss && mkcert -install)"
-    exit 1
-  else
-    echo "✅ mkcert ist installiert"
-  fi
-
-  if command -v yq >/dev/null; then
-    echo "✅ yq ist installiert"
-  else
-    echo "⚠️  yq nicht gefunden (wird empfohlen, fällt sonst auf grep/awk zurück)"
-  fi
-
-  echo "───────────────────────────────"
-
-  # 🌍 Traefik
-  if docker ps | grep -q devon-traefik; then
-    echo "✅ Traefik läuft"
-  else
-    echo "⚠️  Traefik läuft nicht. Starte mit: devon router start"
-  fi
-
-  echo "───────────────────────────────"
-
-  # 📜 Projekt / Domain / Zertifikat prüfen
-  load_env_or_cfg
-  DOMAIN="${DOMAIN:-${PROJECT}.${DOMAIN_BASE}}"
-
-  echo "🌐 Projekt: $PROJECT"
-  echo "🔗 Domain:  https://${DOMAIN}"
-  echo "───────────────────────────────"
-
-  # 🔒 Zertifikatsprüfung
-  echo "🔒 Zertifikatstest:"
-  if command -v openssl >/dev/null; then
-    SUBJECT=$(echo | openssl s_client -connect "${DOMAIN}:443" -servername "${DOMAIN}" 2>/dev/null | openssl x509 -noout -subject || true)
-    if [ -n "$SUBJECT" ]; then
-      echo "✅ Zertifikat aktiv:"
-      echo "   $SUBJECT"
-    else
-      echo "⚠️  Kein gültiges Zertifikat gefunden (mkcert evtl. neu ausführen)"
-    fi
-  else
-    echo "⚠️  openssl nicht installiert → kann Zertifikat nicht prüfen"
-  fi
-
-  echo "───────────────────────────────"
-
-  # 🧩 Netzwerk-Check
-  echo "🔌 Docker-Netzwerk:"
-  if docker network inspect devon >/dev/null 2>&1; then
-    echo "✅ devon-Netzwerk existiert"
-  else
-    echo "⚠️  devon-Netzwerk fehlt → wird automatisch bei Start erstellt"
-  fi
-
-  echo "───────────────────────────────"
-  echo "✅ Doctor abgeschlossen"
-}
-
-db() {
-  load_env_or_cfg
-  case "$2" in
-    shell) docker exec -it "${PROJECT}-db" psql -U "$DB_USER" -d "$DB_NAME" ;;
-    import)
-      [ -f "$3" ] || { echo "Datei $3 fehlt"; exit 1; }
-      cat "$3" | docker exec -i "${PROJECT}-db" psql -U "$DB_USER" -d "$DB_NAME"
-      ;;
-    export)
-      OUT="${3:-${PROJECT}_dump.sql}"
-      docker exec -i "${PROJECT}-db" pg_dump -U "$DB_USER" "$DB_NAME" > "$OUT"
-      echo "💾 exportiert: $OUT"
-      ;;
-    *) echo "Nutze: devon db [shell|import <file>|export [file]]";;
-  esac
-}
-
-cert-reload() {
-  echo "🔁 Traefik lädt file-provider automatisch bei Dateiänderungen."
-  echo "Tipp: docker logs -f devon-traefik | grep -i 'Configuration loaded'"
-}
-
-print_help() {
-  cat <<'EOF'
-devon – lokale Dev-Tooling CLI
-
-USAGE:
-  devon <command> [options]
-
-KOMMANDOS:
-  config            Generiert/aktualisiert .devon/ inkl. Services & docker-compose.yaml
-                    Flags:
-                      --type=<framework>            (z.B. django)
-                      --python-version=<x.y>        (z.B. 3.12)
-                      --db-type=<postgres|...>
-                      --db-image=<image:tag>        (z.B. postgres:15)
-                      --db-name=<name>              (default: db)
-                      --db-user=<user>              (default: postgres)
-                      --db-password=<pw>            (default: db)
-                      --db-port=<port>              (default: 5432)
-                      --domain-base=<dns>           (default: devon.site)
-
-  init              Initialisiert ~/.devon (kopiert Templates/Traefik aus Paket)
-  start             Startet Projekt-Container (Django + DB) und richtet Zertifikat ein
-  stop              Stoppt Projekt-Container
-  restart           stop + start
-  ssh               Shell in den Django-Container
-  create            Führt framework-spezifische create.sh aus, erzeugt Config, startet
-  delete            Entfernt Container, Volumes (-v) und .devon Ordner
-  list              Listet gefundene devon-Projekte (Container/Volumes/URL)
-  status            Zeigt Status der relevanten Container + Projekt-URL
-  logs [svc]        Zeigt Logs (svc: django|db|traefik), default: Hinweis auf Nutzung
-  router <cmd>      Steuert globalen Traefik (start|stop|restart|logs)
-  db <subcmd>       DB-Helfer: shell | import <dump.sql> | export [out.sql]
-  open              Öffnet https://<project>.<domain-base> im Browser
-  doctor            Diagnose: Docker/Compose/mkcert/Traefik & TLS-Check
-  cert-reload       Hinweis zu automatischer Traefik-Konfig-Neuladung
-  --version|-v      Zeigt devon CLI Version
-  help|-h|--help    Diese Hilfe
-
-BEISPIELE:
-  devon config --type=django --python-version=3.12 --db-port=5433
-  devon start
-  devon logs django
-  devon db shell
-  devon router start
-  devon open
-
-KONFIG-Dateien & Vorlagen:
-  $DEVON_HOME/templates/frameworks/<type>/config.yaml.tpl
-  $DEVON_HOME/templates/services/*.yaml
-  <projekt>/.devon/config.yaml         (generiert)
-  <projekt>/.devon/docker-compose.yaml (generiert)
-  <projekt>/.devon/.env                (generiert, nicht committen)
-
-DOMAINS:
-  Default ist devon.site (z.B. project.devon.site). Für lokale Entwicklung wird automatisch
-
-ZERTIFIKATE (Traefik file-provider):
-  Zertifikate werden in den Containerpfad /mnt/devon-global-cache/traefik/certs/ kopiert.
-  mkcert wird verwendet, um lokale TLS-Zertifikate zu erzeugen.
-
-ENV VARS (optional):
-  DEVON_HOME      Basisverzeichnis (Default: $HOME/.devon)
-  DEVON_VERSION   Überschreibt Tool-Version (sonst DEVON_HOME/VERSION oder 0.0.1)
-  DOMAIN_BASE     DNS-Suffix (Default: devon.site)
-  DOMAIN          Vollständige Domain (überschreibt Berechnung)
-
-ABHÄNGIGKEITEN:
-  - Docker + Docker Compose v2
-  - mkcert (für lokale TLS-Zertifikate)
-  - yq (optional, für robustes YAML; sonst Fallback via grep/awk)
-
-TROUBLESHOOTING:
-  - devon doctor
-  - docker logs -f devon-traefik | grep -i "Configuration loaded"
-  - mkcert -install (CA installieren, falls Browser TLS nicht vertraut)
-EOF
-}
-
-case "$1" in
-  init) ensure_user_home; echo "✅ DEVON_HOME ist bereit: $DEVON_HOME"; exit 0 ;;
-  config) shift; config "$@" ;;
-  start) start ;;
-  stop) stop ;;
-  ssh) ssh ;;
-  create) create ;;
-  delete) delete ;;
-  list) list ;;
-  router) router "$@" ;;
-  status) status ;;
-  logs) logs "$@" ;;
-  restart) restart ;;
-  open) open ;;
-  doctor) doctor ;;
-  db) db "$@" ;;
-  cert-reload) cert-reload ;;
-  --version|-v) tool_version ;;
-  help|-h|--help) print_help ;;
-  "" )
-    # kein Command → kurze Hilfe
-    echo "devon – gib 'devon help' für alle Befehle ein."
-    echo "Beispiele: 'devon config --type=django', 'devon start'"
-    ;;
-  * )
-    echo "❌ Unbekanntes Kommando: '$1'"
-    echo "Tipp: 'devon help'"
-    exit 1
-    ;;
-esac
+fi
+
+# ---------------------------------------------------------------------
+# 🧭 Command-Dispatcher
+# ---------------------------------------------------------------------
+COMMAND="${1:-}"
+shift || true
+
+if [ -z "$COMMAND" ]; then
+  echo "devon – gib 'devon help' für alle Befehle ein."
+  echo "Beispiele: 'devon config --type=django', 'devon start'"
+  exit 0
+fi
+
+# Prüfen, ob Funktion existiert
+if declare -F "$COMMAND" >/dev/null 2>&1; then
+  "$COMMAND" "$@"
+else
+  echo "❌ Unbekanntes Kommando: '$COMMAND'"
+  echo "Tipp: 'devon help'"
+  exit 1
+fi
