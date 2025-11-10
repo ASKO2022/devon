@@ -554,8 +554,8 @@ doctor() {
   echo "✅ Doctor abgeschlossen"
 }
 
-
 db() {
+  load_env_or_cfg
   case "$2" in
     shell) docker exec -it "${PROJECT}-db" psql -U "$DB_USER" -d "$DB_NAME" ;;
     import)
