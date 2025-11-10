@@ -480,35 +480,80 @@ restart() {
 }
 
 open() {
-  DOMAIN="$PROJECT.devon.site"
+  load_env_or_cfg
+  DOMAIN="${DOMAIN:-${PROJECT}.${DOMAIN_BASE}}"
   command -v open >/dev/null && open "https://$DOMAIN" || xdg-open "https://$DOMAIN"
 }
 
 doctor() {
   set -e
   echo "🩺 devon doctor"
+  echo "───────────────────────────────"
+
+  # 🔧 Basis-Checks
   command -v docker >/dev/null || { echo "❌ Docker fehlt"; exit 1; }
   docker compose version >/dev/null || { echo "❌ Docker Compose v2 fehlt"; exit 1; }
+
   if ! command -v mkcert >/dev/null; then
-    echo "❌ mkcert fehlt (brew install mkcert nss && mkcert -install)"
+    echo "❌ mkcert fehlt (installiere mit: brew install mkcert nss && mkcert -install)"
     exit 1
-  fi
-  if ! security find-certificate -a -Z -p ~/Library/Keychains/login.keychain-db 2>/dev/null | grep -q "mkcert"; then
-    echo "⚠️  mkcert CA evtl. nicht installiert: 'mkcert -install'"
-  fi
-  if ! docker ps | grep -q devon-traefik; then
-    echo "⚠️  Traefik läuft nicht. Starte mit: devon router start"
   else
-    echo "✅ Traefik läuft"
+    echo "✅ mkcert ist installiert"
   fi
-  DOMAIN="$PROJECT.devon.site"
-  echo "🔒 Zertifikatstest: $DOMAIN"
+
+  if command -v yq >/dev/null; then
+    echo "✅ yq ist installiert"
+  else
+    echo "⚠️  yq nicht gefunden (wird empfohlen, fällt sonst auf grep/awk zurück)"
+  fi
+
+  echo "───────────────────────────────"
+
+  # 🌍 Traefik
+  if docker ps | grep -q devon-traefik; then
+    echo "✅ Traefik läuft"
+  else
+    echo "⚠️  Traefik läuft nicht. Starte mit: devon router start"
+  fi
+
+  echo "───────────────────────────────"
+
+  # 📜 Projekt / Domain / Zertifikat prüfen
+  load_env_or_cfg
+  DOMAIN="${DOMAIN:-${PROJECT}.${DOMAIN_BASE}}"
+
+  echo "🌐 Projekt: $PROJECT"
+  echo "🔗 Domain:  https://${DOMAIN}"
+  echo "───────────────────────────────"
+
+  # 🔒 Zertifikatsprüfung
+  echo "🔒 Zertifikatstest:"
   if command -v openssl >/dev/null; then
     SUBJECT=$(echo | openssl s_client -connect "${DOMAIN}:443" -servername "${DOMAIN}" 2>/dev/null | openssl x509 -noout -subject || true)
-    echo "   subject: ${SUBJECT:-(keine Verbindung)}"
+    if [ -n "$SUBJECT" ]; then
+      echo "✅ Zertifikat aktiv:"
+      echo "   $SUBJECT"
+    else
+      echo "⚠️  Kein gültiges Zertifikat gefunden (mkcert evtl. neu ausführen)"
+    fi
+  else
+    echo "⚠️  openssl nicht installiert → kann Zertifikat nicht prüfen"
   fi
-  echo "✅ Doctor fertig"
+
+  echo "───────────────────────────────"
+
+  # 🧩 Netzwerk-Check
+  echo "🔌 Docker-Netzwerk:"
+  if docker network inspect devon >/dev/null 2>&1; then
+    echo "✅ devon-Netzwerk existiert"
+  else
+    echo "⚠️  devon-Netzwerk fehlt → wird automatisch bei Start erstellt"
+  fi
+
+  echo "───────────────────────────────"
+  echo "✅ Doctor abgeschlossen"
 }
+
 
 db() {
   case "$2" in
