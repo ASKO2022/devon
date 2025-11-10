@@ -268,7 +268,8 @@ EOF
 
 
 start() {
-  DOMAIN="$PROJECT.devon.site"
+  load_env_or_cfg
+  DOMAIN="${DOMAIN:-${PROJECT}.${DOMAIN_BASE}}"
   GLOBAL_CERT_DIR="$DEVON_HOME/traefik/global_certs"
   mkdir -p "$GLOBAL_CERT_DIR"
 
@@ -302,7 +303,7 @@ tls:
       keyFile: /mnt/devon-global-cache/traefik/certs/${DOMAIN}.key
 EOF
 
-  # 📦 Dateien ins Traefik-Volume kopieren
+  # 📡 Zertifikate in Traefik-Container kopieren
   echo "📡 Kopiere Zertifikate in Traefik-Container ..."
   docker exec devon-traefik mkdir -p /mnt/devon-global-cache/traefik/certs 2>/dev/null || true
   docker cp "$CRT"  devon-traefik:/mnt/devon-global-cache/traefik/certs/
@@ -311,7 +312,7 @@ EOF
 
   echo "✅ Zertifikat aktiv unter: /mnt/devon-global-cache/traefik/certs/${DOMAIN}.crt"
 
-  # 🧩 Domain in /etc/hosts eintragen
+  # 🧩 Stelle sicher, dass Domain in /etc/hosts steht
   if ! grep -q "$DOMAIN" /etc/hosts; then
     echo "🧩 Füge Domain zu /etc/hosts hinzu: $DOMAIN"
     echo "127.0.0.1 $DOMAIN" | sudo tee -a /etc/hosts >/dev/null
@@ -327,7 +328,7 @@ EOF
 
   # 🐍 Django + DB starten
   echo "🐍 Starte Django + Datenbank ..."
-  docker compose -f "$MYDEV_DIR/docker-compose.yaml" up -d --remove-orphans
+  docker compose --env-file "$MYDEV_DIR/.env" -f "$MYDEV_DIR/docker-compose.yaml" up -d --remove-orphans
 
   echo ""
   echo "✅ Projekt läuft unter: https://${DOMAIN}"
