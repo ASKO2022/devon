@@ -11,9 +11,10 @@ devon_open() {
   echo "🌐 Öffne Projekt im Browser: $URL"
 
   if command -v open >/dev/null 2>&1; then
-    open "$URL"
+    /usr/bin/open "$URL"
     return
   fi
+
 
   if command -v xdg-open >/dev/null 2>&1; then
     xdg-open "$URL"
