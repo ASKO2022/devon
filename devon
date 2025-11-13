@@ -7,12 +7,27 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------
+# 🔧 DEVON_HOME automatisch erkennen
+# ---------------------------------------------------------------------
+SCRIPT_PATH="$(realpath "$0" 2>/dev/null || readlink "$0")"
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+
+# Wenn wir im Entwicklungsordner sind (z. B. ~/Projects/devon), dort arbeiten
+if [[ -d "$SCRIPT_DIR/lib" ]]; then
+  DEVON_HOME="$SCRIPT_DIR"
+else
+  # Sonst Benutzerinstallation (~/.devon) verwenden
+  DEVON_HOME="${DEVON_HOME:-$HOME/.devon}"
+fi
+
+
+
+# ---------------------------------------------------------------------
 # 🔧 Basis-Setup
 # ---------------------------------------------------------------------
 PROJECT="$(basename "$PWD")"
 MYDEV_DIR=".devon"
 DEVON_NAME="devon"
-DEVON_HOME="${DEVON_HOME:-$HOME/.devon}"
 DOMAIN_BASE="${DOMAIN_BASE:-devon.site}"
 DEVON_VERSION_DEFAULT="0.0.1"
 
@@ -22,6 +37,7 @@ echo "🌐 Verwende feste Domain-Basis: ${DOMAIN_BASE}"
 # 📚 Libraries laden
 # ---------------------------------------------------------------------
 LIB_DIR="$DEVON_HOME/lib"
+
 if [ -d "$LIB_DIR" ]; then
   for lib in "$LIB_DIR"/*.sh; do
     [ -f "$lib" ] && source "$lib"
